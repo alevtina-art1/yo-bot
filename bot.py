@@ -100,25 +100,23 @@ async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ——— тарифы ———
 async def show_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
-    # Формируем текст сообщения
-    text = "*Тарифы х*ифы:*
-"
+    # Формирование текста с помощью тройных кавычек для избежания ошибок
+    text = """*Тарифы х*ифы:*
+"""
     for key, t in TARIFFS.items():
         text += f"🔸 *{t['title']}* — {t['price']}₽ ({t['limit']} смс)
 "
-    # Кнопки для покупки платных тарифов
     kb = [
         [InlineKeyboardButton(f"Купить {t['title']}", callback_data=f"buy_{key}")]
         for key, t in TARIFFS.items() if t['price'] > 0
     ]
-    # Редактируем сообщение с тарифами
     await update.callback_query.edit_message_text(
         text=text,
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown",
     )
 
-async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
     tariff = update.callback_query.data.split("_")[1]
     user_id = update.effective_user.id
@@ -211,4 +209,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
