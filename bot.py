@@ -93,34 +93,32 @@ async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "Респект, ты в деле. Ниже — тарифы х*ифы:",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("💰 Тарифы х*ифы", callback_data="tariffs")],
-            [InlineKeyboardButton("❓ За что плачу?", callback_data="why_pay")],
+            [InlineKeyboardButton("❓ За чё плачу?", callback_data="why_pay")],
         ]),
     )
 
 # ——— тарифы ———
 async def show_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
-    # Начальный текст со строкой и новой строкой
+    # Формируем текст сообщения
     text = "*Тарифы х*ифы:*
 "
-    # Добавляем информацию по каждому тарифу
     for key, t in TARIFFS.items():
         text += f"🔸 *{t['title']}* — {t['price']}₽ ({t['limit']} смс)
 "
-    # Построение кнопок для покупки платных тарифов
+    # Кнопки для покупки платных тарифов
     kb = [
         [InlineKeyboardButton(f"Купить {t['title']}", callback_data=f"buy_{key}")]
         for key, t in TARIFFS.items() if t['price'] > 0
     ]
-    # Отправка отредактированного сообщения
+    # Редактируем сообщение с тарифами
     await update.callback_query.edit_message_text(
-        text,
+        text=text,
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown",
     )
 
-# ——— покупка ——— ———
-async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
     tariff = update.callback_query.data.split("_")[1]
     user_id = update.effective_user.id
