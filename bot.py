@@ -100,26 +100,21 @@ async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ——— тарифы ———
 async def show_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
-    # Формируем текст сообщения с корректными строковыми литералами
-    text = "*Тарифы х*ифы:*
-"
-    # Добавляем информацию по каждому тарифу
+    text = "*Тарифы х*ифы:*\n"
     for key, t in TARIFFS.items():
-        text += f"🔸 *{t['title']}* — {t['price']}₽ ({t['limit']} смс)
-"
-    # Составляем кнопки для покупки
+        text += f"🔸 *{t['title']}* — {t['price']}₽ ({t['limit']} смс)\n"
     kb = [
         [InlineKeyboardButton(f"Купить {t['title']}", callback_data=f"buy_{key}")]
         for key, t in TARIFFS.items() if t['price'] > 0
     ]
-    # Обновляем сообщение
     await update.callback_query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown",
     )
 
-async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# ——— Покупка тарифа ———
+async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
     tariff = update.callback_query.data.split("_")[1]
     user_id = update.effective_user.id
@@ -161,7 +156,6 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ——— голосовые сообщения ———
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    # Проверяем пользователя и лимит до транскрипции
     if user_id not in user_data:
         return await update.message.reply_text("Жми /start сначала.")
     u = user_data[user_id]
@@ -173,7 +167,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     voice = update.message.voice
     if not voice:
         return
-    # Скачиваем файл и транскрибируем
     file = await voice.get_file()
     tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg").name
     await file.download_to_drive(tmp_path)
@@ -191,12 +184,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         os.remove(tmp_path)
         return
     os.remove(tmp_path)
-    # Получаем ответ от OpenAI и отправляем
     reply = await ask_openai(text)
     await update.message.reply_text(reply)
 
 # ——— запуск ———
-
 def main() -> None:
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
