@@ -1,197 +1,146 @@
 import logging
 import os
-import json
-import tempfile
-import random
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ContextTypes
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from openai import OpenAI
 from dotenv import load_dotenv
-import openai
+from io import BytesIO
 
-# Загрузка переменных окружения
+from templates_logic import get_reply_from_templates
+
 load_dotenv()
+
+# ——— Конфиг ———
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Проверка переменных окружения
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is not set in environment variables.")
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not set in environment variables.")
-
-openai.api_key = OPENAI_API_KEY
-
-# Настройки
 ADMIN_ID = 5576028179
+
 TARIFFS = {
-    "smell":     {"title": "Понюхай",          "price": 0,    "limit": 50},
-    "basic":     {"title": "Просто хам",       "price": 99,   "limit": 50},
-    "simple":    {"title": "Буду проще",       "price": 299,  "limit": 100},
-    "etiquette": {"title": "Чхал на этикет",   "price": 499,  "limit": 300},
-    "truth":     {"title": "Бесценная правда", "price": 699,  "limit": 600},
-    "ebamurena": {"title": "Ебамурена",        "price": 1099, "limit": 2000},
+    "poniuhai": {"title": "Понюхай", "limit": 50, "price": 0},
+    "basic": {"title": "Просто хам", "limit": 100, "price": 99},
+    "simple": {"title": "Буду проще", "limit": 100, "price": 299},
+    "etiquette": {"title": "Чхал на этикет", "limit": 300, "price": 499},
+    "truth": {"title": "Бесценная правда", "limit": 600, "price": 699},
+    "ebamurena": {"title": "Ебамурена", "limit": 2000, "price": 1099},
 }
-TEMPLATES_PATH = "expired_templates.json"
-USER_DATA_PATH = "user_data.json"
+
+user_data = {}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Загрузка шаблонов с обработкой ошибок
-try:
-    with open(TEMPLATES_PATH, "r", encoding="utf-8") as f:
-        expired_templates = json.load(f)
-        if not isinstance(expired_templates, list) or not expired_templates:
-            raise ValueError("expired_templates.json must contain a non-empty list.")
-except Exception as e:
-    logger.error("Ошибка загрузки шаблонов: %s", e)
-    expired_templates = ["Лимит сообщений исчерпан. Купи тариф или подожди."]
-
-# Загрузка базы пользователей
-def load_users():
-    if not os.path.exists(USER_DATA_PATH):
-        return {}
+# ——— OpenAI-ответ ———
+async def ask_openai(prompt):
     try:
-        with open(USER_DATA_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error("Ошибка чтения user_data.json: %s", e)
-        return {}
-
-def save_users(data):
-    try:
-        with open(USER_DATA_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.error("Ошибка сохранения user_data.json: %s", e)
-
-# Генерация ответа от ИИ
-async def generate_reply(prompt: str) -> str:
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Отвечай как дерзкий уличный помощник."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.9
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=120,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error("Error in generate_reply: %s", e)
-        return "Ошибка при генерации ответа. Попробуй позже."
+        return f"⚠️ Ошибка ИИ: {str(e)}"
 
-# Озвучка
-async def get_tts_filename(text: str, gender: str) -> str | None:
-    voice = "ru-RU-VeraNeural" if gender == "female" else "ru-RU-DmitryNeural"
-    try:
-        audio_data = openai.audio.speech.create(
-            model="tts-1",
-            voice=voice,
-            input=text
-        )
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        with open(tmp.name, "wb") as f:
-            f.write(audio_data.content)
-        return tmp.name
-    except Exception as e:
-        logger.error("TTS error: %s", e)
-        return None
-
-# Обработчик ошибок приложения
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Exception while handling update %s: %s", update, context.error)
-
-# Хендлеры
+# ——— /start ———
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "Емааа! Дарова, короче.\n"
-        "Я твой бро или подруга. Базарю резко, могу и послать. Кто ты, пацан или баба?"
+    kb = [
+        [InlineKeyboardButton("👊 Я пацан", callback_data="gender_male"),
+         InlineKeyboardButton("💅 Я баба", callback_data="gender_female")]
+    ]
+    await update.message.reply_text(
+        "Емааа! Дарова, ща разберёмся кто ты.\nТы вообще кто по жизни?",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
-    kb = [[InlineKeyboardButton("👊 Пацаан", callback_data="gender_male"),
-           InlineKeyboardButton("💁 Баба", callback_data="gender_female")]]
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
+# ——— пол ———
 async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    gender = update.callback_query.data.split("_")[1]
+    user_id = update.effective_user.id
+    user_data[user_id] = {"gender": gender, "tariff": "poniuhai", "used": 0}
     await update.callback_query.answer()
-    gender = update.callback_query.data.split('_')[1]
-    context.user_data['gender'] = gender
-    text = f"Окей, {'бро' if gender=='male' else 'подруга'}! Ты согласен, что тебя будут подстёбывать и посылать?"
-    kb = [[InlineKeyboardButton("✅ Согласен", callback_data="consent_yes"),
-           InlineKeyboardButton("❌ Я-лох", callback_data="consent_no")]]
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
-
-async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    if update.callback_query.data.endswith('no'):
-        return await update.callback_query.edit_message_text("Ну и иди тогда. /start если передумаешь.")
-    user_id = str(update.callback_query.from_user.id)
-    users = load_users()
-    users[user_id] = {'tariff': 'smell', 'messages': 0, 'gender': context.user_data.get('gender', 'male')}
-    save_users(users)
-    text = "Чекай тарифы х*ифы ниже:"
-    kb = [[InlineKeyboardButton("💰 Тарифы х*ифы", callback_data="show_tariffs")]]
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
-
-async def show_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    parts = [f"🔹 *{v['title']}* — {v['price']}₽ ({v['limit']} сообщений)" for v in TARIFFS.values()]
-    text = '*Тарифы х*ифы:*
-' + '\n'.join(parts)
-    keyboard = [[InlineKeyboardButton(f"{v['title']} — {v['price']}₽", callback_data=f"pay_{k}")]
-                for k, v in TARIFFS.items()]
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
-async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    tariff_key = update.callback_query.data.split('_', 1)[1]
-    user_id = str(update.callback_query.from_user.id)
-    users = load_users()
-    if user_id in users:
-        users[user_id]['tariff'] = tariff_key
-        save_users(users)
-    title = TARIFFS.get(tariff_key, {}).get('title', tariff_key)
     await update.callback_query.edit_message_text(
-        f"Тариф *{title}* выбран. (Заглушка оплаты)\nПогнали!", parse_mode='Markdown'
+        "Ты серьёзно согласен, что тебя тут будут подстёбывать, стебать и даже слать? 😂",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Согласен", callback_data="consent_yes"),
+             InlineKeyboardButton("❌ Я слабак", callback_data="consent_no")]
+        ])
     )
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    text = update.message.text
-    users = load_users()
-    if user_id not in users:
-        return await update.message.reply_text("Сначала жми /start, чудо.")
-    user = users[user_id]
-    tariff = TARIFFS.get(user['tariff'], list(TARIFFS.values())[0])
-    if user['messages'] >= tariff['limit']:
-        return await update.message.reply_text(random.choice(expired_templates))
-    reply = await generate_reply(text)
-    users[user_id]['messages'] += 1
-    save_users(users)
-    await update.message.reply_text(reply)
-    mp3_path = await get_tts_filename(reply, user.get('gender', 'male'))
-    if mp3_path and os.path.exists(mp3_path):
-        await update.message.reply_voice(voice=InputFile(mp3_path))
-        try:
-            os.remove(mp3_path)
-        except Exception as e:
-            logger.warning("Не удалось удалить временный файл: %s", e)
+# ——— согласие ———
+async def consent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if update.callback_query.data == "consent_no":
+        await update.callback_query.edit_message_text("Ну и катись, /start если надумаешь.")
+        return
+    await update.callback_query.edit_message_text(
+        "Респект, ты в деле. Ниже — тарифы х*ифы:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("💰 Тарифы х*ифы", callback_data="tariffs")],
+            [InlineKeyboardButton("❓ За что плачу?", callback_data="why_pay")]
+        ])
+    )
 
-# Запуск бота
-if __name__ == '__main__':
+# ——— тарифы ———
+async def show_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = "*Тарифы х*ифы:*\n\n"
+    for key, t in TARIFFS.items():
+        text += f"🔸 *{t['title']}* — {t['price']}₽ ({t['limit']} смс)\n"
+    kb = [
+        [InlineKeyboardButton(f"Купить {t['title']}", callback_data=f"buy_{k}")]
+        for k, t in TARIFFS.items() if t["price"] > 0
+    ]
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+# ——— покупка ———
+async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tariff = update.callback_query.data.split("_")[1]
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        f"Выбран тариф: *{TARIFFS[tariff]['title']}*. Пока оплата заглушка.\nСкоро прикрутим — не ной.",
+        parse_mode="Markdown"
+    )
+
+# ——— почему платим ———
+async def why_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "Ты платишь за:\n— Мощь ChatGPT без VPN\n— Озвучку и стиль\n— Ответы по картинке, фотке, голосом\n— Ну и за кайф, ага."
+    )
+
+# ——— сообщения ———
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    msg = update.message.text
+
+    if user_id not in user_data:
+        await update.message.reply_text("Жми /start сначала.")
+        return
+
+    u = user_data[user_id]
+    tariff = u["tariff"]
+    u["used"] += 1
+
+    if u["used"] > TARIFFS[tariff]["limit"]:
+        template_reply = get_reply_from_templates(msg)
+        await update.message.reply_text(template_reply)
+        return
+
+    reply = await ask_openai(msg)
+    await update.message.reply_text(reply)
+
+# ——— запуск ———
+def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_error_handler(error_handler)
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CallbackQueryHandler(gender_callback, pattern='^gender_'))
-    app.add_handler(CallbackQueryHandler(consent_callback, pattern='^consent_'))
-    app.add_handler(CallbackQueryHandler(show_tariffs, pattern='^show_tariffs$'))
-    app.add_handler(CallbackQueryHandler(pay_callback, pattern='^pay_'))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logger.info("Бот запущен и ждёт сообщений")
-    try:
-        app.run_polling()
-    except Exception as e:
-        logger.exception("Неожиданная ошибка при запуске бота: %s", e)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(gender_callback, pattern="gender_"))
+    app.add_handler(CallbackQueryHandler(consent_callback, pattern="consent_"))
+    app.add_handler(CallbackQueryHandler(show_tariffs, pattern="tariffs"))
+    app.add_handler(CallbackQueryHandler(buy_callback, pattern="buy_"))
+    app.add_handler(CallbackQueryHandler(why_pay, pattern="why_pay"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
